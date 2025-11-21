@@ -1,0 +1,65 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+_deps/
+compile_commands.json
+
+# Compiled files
+*.o
+*.obj
+*.so
+*.so.*
+*.dylib
+*.dll
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+ytdlp
+ytdlp-cli
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.sln
+*.vcxproj*
+
+# Editors
+*~
+*.swp
+*.swo
+
+# Testing
+Testing/
+*.gcda
+*.gcno
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Downloaded media (test artifacts)
+*.mp4
+*.webm
+*.mkv
+*.mp3
+*.m4a
+
+# Temporary
+*.tmp
+tmp/

@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/sharedDrive/code_programs/clonations/yt-dlp/**)",
+      "Bash(find:*)",
+      "Read(//mnt/sharedDrive/code_programs/clonations/C++/**)",
+      "Read(//mnt/sharedDrive/code_programs/clonations/**)",
+      "Bash(mkdir:*)",
+      "Bash(tree:*)",
+      "Bash(for dir in third_party/*/)",
+      "Bash(if [ -f \"$dir/CMakeLists.txt\" ])",
+      "Bash(then echo \"✓ Has CMakeLists.txt\")",
+      "Bash(else echo \"✗ Missing CMakeLists.txt\")",
+      "Bash(fi)",
+      "Bash(done)",
+      "Bash(cmake:*)",
+      "Bash(/mnt/sharedDrive/code_programs/languages/C++/libraries/yt-dlp-c++/build/ytdlp-lib-test)",
+      "Bash(ctest:*)",
+      "Bash(./tests/unit/filesystem_utils_test \"basename extracts filename\")",
+      "Bash(./tests/unit/filesystem_utils_test:*)",
+      "Bash(./tests/unit/parse_utils_test)",
+      "Bash(./tests/unit/date_utils_test)",
+      "Bash(xargs:*)",
+      "Bash(awk:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
