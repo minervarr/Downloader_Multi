@@ -8,9 +8,130 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <regex>
 #include <fmt/core.h>
 
 using namespace ytdlp;
+
+/**
+ * Sanitize a string for use as filename.
+ * Replaces unsafe characters, collapses separators, and limits length.
+ */
+std::string sanitize_filename(const std::string& name, size_t max_length = 100) {
+    std::string result;
+    result.reserve(name.size());
+
+    for (char c : name) {
+        // Replace unsafe filesystem characters and normalize separators
+        if (c == '/' || c == '\\' || c == ':' || c == '*' ||
+            c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
+            result += '_';
+        } else if (c == ' ' || c == '\t') {
+            result += '_';  // Whitespace to underscores
+        } else {
+            result += c;
+        }
+    }
+
+    // Normalize separator patterns: replace _-_, -_-, _--, --_, etc. with single -
+    std::regex separator_pattern(R"([_\-]+)");
+    result = std::regex_replace(result, separator_pattern, "-");
+
+    // Trim leading/trailing separators
+    while (!result.empty() && (result.front() == '-' || result.front() == '_')) {
+        result.erase(0, 1);
+    }
+    while (!result.empty() && (result.back() == '-' || result.back() == '_')) {
+        result.pop_back();
+    }
+
+    // Limit length
+    if (result.length() > max_length) {
+        result = result.substr(0, max_length);
+        // Don't cut in the middle of a word if possible
+        size_t last_sep = result.rfind('-');
+        if (last_sep == std::string::npos) {
+            last_sep = result.rfind('_');
+        }
+        if (last_sep != std::string::npos && last_sep > max_length * 0.7) {
+            result = result.substr(0, last_sep);
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Extract timestamp from Zoom URL (format: GMT20251117-140940).
+ * Returns ISO8601-like prefix: "2025-11-17_140940"
+ */
+std::string extract_zoom_timestamp(const std::string& url) {
+    // Pattern: GMT followed by YYYYMMDD-HHMMSS
+    std::regex timestamp_regex(R"(GMT(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2}))");
+    std::smatch match;
+
+    if (std::regex_search(url, match, timestamp_regex)) {
+        // Format: YYYY-MM-DD_HHMMSS
+        return fmt::format("{}-{}-{}_{}{}{}",
+            match[1].str(), match[2].str(), match[3].str(),
+            match[4].str(), match[5].str(), match[6].str());
+    }
+
+    // Fallback: use current date/time
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    std::tm* tm_now = std::localtime(&time_t_now);
+
+    return fmt::format("{:04d}-{:02d}-{:02d}_{:02d}{:02d}{:02d}",
+        tm_now->tm_year + 1900, tm_now->tm_mon + 1, tm_now->tm_mday,
+        tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec);
+}
+
+/**
+ * Generate smart filename for video.
+ * Format: YYYY-MM-DD_HHMMSS_<title>_<id_short>.ext
+ *
+ * Benefits:
+ * - ISO8601 date prefix ensures chronological sorting
+ * - Title provides context
+ * - Short ID ensures uniqueness (no overwrites)
+ */
+std::string generate_smart_filename(
+    const core::InfoDict& info,
+    const std::string& download_url,
+    const std::string& extension = "mp4"
+) {
+    // Extract timestamp from URL
+    std::string timestamp = extract_zoom_timestamp(download_url);
+
+    // Get title (sanitized, max 80 chars)
+    std::string title = "recording";
+    if (info.contains("title") && info["title"].is_string()) {
+        title = sanitize_filename(info["title"].get<std::string>(), 80);
+    }
+
+    // Get short ID (first 8 chars for uniqueness)
+    std::string short_id;
+    if (info.contains("id") && info["id"].is_string()) {
+        std::string full_id = info["id"].get<std::string>();
+        // Take first segment before any dots
+        size_t dot_pos = full_id.find('.');
+        if (dot_pos != std::string::npos && dot_pos <= 12) {
+            short_id = full_id.substr(0, dot_pos);
+        } else {
+            short_id = full_id.substr(0, std::min(size_t(12), full_id.length()));
+        }
+    }
+
+    // Build filename: YYYY-MM-DD_HHMMSS_title_id.ext
+    std::string filename = timestamp + "_" + title;
+    if (!short_id.empty()) {
+        filename += "_" + short_id;
+    }
+    filename += "." + extension;
+
+    return filename;
+}
 
 /**
  * Download a file from URL to output path using streaming.
@@ -93,9 +214,13 @@ void print_usage(const char* program_name) {
     fmt::print("  -i, --info             Print video info only (don't download)\n");
     fmt::print("  -q, --quiet            Quiet mode\n");
     fmt::print("  -h, --help             Show this help\n");
+    fmt::print("\nAuto-generated filename format:\n");
+    fmt::print("  YYYY-MM-DD_HHMMSS_<title>_<id>.mp4\n");
+    fmt::print("  Example: 2025-11-17_140940_Finanzas_Empresariales-GI3101_k-O3Gvpp.mp4\n");
     fmt::print("\nExamples:\n");
     fmt::print("  {} https://zoom.us/rec/play/xxx\n", program_name);
-    fmt::print("  {} -c cookies.txt -o meeting.mp4 https://zoom.us/rec/play/xxx\n", program_name);
+    fmt::print("  {} -c cookies.txt https://zoom.us/rec/play/xxx\n", program_name);
+    fmt::print("  {} -c cookies.txt -o custom_name.mp4 https://zoom.us/rec/play/xxx\n", program_name);
 }
 
 int main(int argc, char** argv) {
@@ -233,21 +358,9 @@ int main(int argc, char** argv) {
         }
 
         // Generate output filename if not specified
+        // Uses smart naming: YYYY-MM-DD_HHMMSS_<title>_<id>.mp4
         if (output.empty()) {
-            if (info.contains("title") && info["title"].is_string()) {
-                output = info["title"].get<std::string>() + ".mp4";
-            } else if (info.contains("id") && info["id"].is_string()) {
-                output = info["id"].get<std::string>() + ".mp4";
-            } else {
-                output = "zoom_recording.mp4";
-            }
-            // Sanitize filename
-            for (char& c : output) {
-                if (c == '/' || c == '\\' || c == ':' || c == '*' ||
-                    c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
-                    c = '_';
-                }
-            }
+            output = generate_smart_filename(info, download_url, "mp4");
         }
 
         if (!quiet) {
