@@ -9,7 +9,7 @@ project(ytdlp-cpp
 # Options
 # ==============================================================================
 option(YTDLP_USE_SYSTEM_LIBS "Use system-installed libraries instead of submodules" ON)
-option(YTDLP_BUILD_TESTS "Build unit tests" ON)
+option(YTDLP_BUILD_TESTS "Build unit tests" OFF)
 option(YTDLP_BUILD_CLI "Build CLI executable" ON)
 option(YTDLP_BUILD_TOOLS "Build debug/test tools" OFF)
 option(BUILD_SHARED_LIBS "Build shared library" OFF)
