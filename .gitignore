@@ -63,3 +63,7 @@ logs/
 # Temporary
 *.tmp
 tmp/
+
+# Cookie files (sensitive data)
+*cookies*.txt
+cookies/
