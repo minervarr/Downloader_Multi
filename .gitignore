@@ -24,8 +24,8 @@ compile_commands.json
 # Executables
 *.exe
 *.out
-ytdlp
-ytdlp-cli
+/ytdlp
+/ytdlp-cli
 
 # IDE
 .vs/
