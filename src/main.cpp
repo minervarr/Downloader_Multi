@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <regex>
+#include <vector>
 #include <fmt/core.h>
 
 using namespace ytdlp;
@@ -90,31 +91,22 @@ std::string extract_zoom_timestamp(const std::string& url) {
 /**
  * Generate smart filename for video.
  * Format: YYYY-MM-DD_HHMMSS_<title>_<id_short>.ext
- *
- * Benefits:
- * - ISO8601 date prefix ensures chronological sorting
- * - Title provides context
- * - Short ID ensures uniqueness (no overwrites)
  */
 std::string generate_smart_filename(
     const core::InfoDict& info,
     const std::string& download_url,
     const std::string& extension = "mp4"
 ) {
-    // Extract timestamp from URL
     std::string timestamp = extract_zoom_timestamp(download_url);
 
-    // Get title (sanitized, max 80 chars)
     std::string title = "recording";
     if (info.contains("title") && info["title"].is_string()) {
         title = sanitize_filename(info["title"].get<std::string>(), 80);
     }
 
-    // Get short ID (first 8 chars for uniqueness)
     std::string short_id;
     if (info.contains("id") && info["id"].is_string()) {
         std::string full_id = info["id"].get<std::string>();
-        // Take first segment before any dots
         size_t dot_pos = full_id.find('.');
         if (dot_pos != std::string::npos && dot_pos <= 12) {
             short_id = full_id.substr(0, dot_pos);
@@ -123,7 +115,6 @@ std::string generate_smart_filename(
         }
     }
 
-    // Build filename: YYYY-MM-DD_HHMMSS_title_id.ext
     std::string filename = timestamp + "_" + title;
     if (!short_id.empty()) {
         filename += "_" + short_id;
@@ -141,7 +132,6 @@ bool download_file(const std::string& url, const std::string& output_path,
     fmt::print("Downloading from: {}\n", url);
     fmt::print("Saving to: {}\n", output_path);
 
-    // Create headers for Zoom-compatible download
     std::map<std::string, std::string> headers = {
         {"User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
         {"Accept", "*/*"},
@@ -149,17 +139,14 @@ bool download_file(const std::string& url, const std::string& output_path,
         {"Referer", "https://zoom.us/"}
     };
 
-    // Progress tracking
     auto start_time = std::chrono::steady_clock::now();
     int64_t last_bytes = 0;
     auto last_update = start_time;
 
-    // Progress callback - shows download progress
     auto progress_callback = [&](int64_t downloaded, int64_t total) {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_update).count();
 
-        // Update every 500ms to avoid spamming
         if (elapsed > 500 || downloaded == total) {
             double speed = 0.0;
             if (elapsed > 0) {
@@ -206,89 +193,53 @@ bool download_file(const std::string& url, const std::string& output_path,
     }
 }
 
-void print_usage(const char* program_name) {
-    fmt::print("Usage: {} [options] <url>\n", program_name);
-    fmt::print("\nOptions:\n");
-    fmt::print("  -o, --output <file>    Output filename (default: auto-generated)\n");
-    fmt::print("  -c, --cookies <file>   Netscape cookie file for authentication\n");
-    fmt::print("  -i, --info             Print video info only (don't download)\n");
-    fmt::print("  -q, --quiet            Quiet mode\n");
-    fmt::print("  -h, --help             Show this help\n");
-    fmt::print("\nAuto-generated filename format:\n");
-    fmt::print("  YYYY-MM-DD_HHMMSS_<title>_<id>.mp4\n");
-    fmt::print("  Example: 2025-11-17_140940_Finanzas_Empresariales-GI3101_k-O3Gvpp.mp4\n");
-    fmt::print("\nExamples:\n");
-    fmt::print("  {} https://zoom.us/rec/play/xxx\n", program_name);
-    fmt::print("  {} -c cookies.txt https://zoom.us/rec/play/xxx\n", program_name);
-    fmt::print("  {} -c cookies.txt -o custom_name.mp4 https://zoom.us/rec/play/xxx\n", program_name);
+/**
+ * Read URLs from a batch file (one URL per line).
+ * Ignores empty lines and lines starting with # (comments).
+ */
+std::vector<std::string> read_batch_file(const std::string& filename) {
+    std::vector<std::string> urls;
+    std::ifstream file(filename);
+
+    if (!file) {
+        throw std::runtime_error("Cannot open batch file: " + filename);
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        // Trim whitespace
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) continue;  // Empty line
+
+        size_t end = line.find_last_not_of(" \t\r\n");
+        line = line.substr(start, end - start + 1);
+
+        // Skip comments
+        if (line.empty() || line[0] == '#') continue;
+
+        urls.push_back(line);
+    }
+
+    return urls;
 }
 
-int main(int argc, char** argv) {
+/**
+ * Process a single URL: extract info and optionally download.
+ * Returns true on success, false on failure.
+ */
+bool process_url(
+    const std::string& url,
+    const std::string& custom_output,
+    extractor::ZoomIE& zoom,
+    core::YoutubeDL& ydl,
+    bool info_only,
+    bool quiet
+) {
     try {
-        // Simple argument parsing
-        std::string url;
-        std::string output;
-        std::string cookie_file;
-        bool quiet = false;
-        bool info_only = false;
-
-        for (int i = 1; i < argc; i++) {
-            std::string arg = argv[i];
-            if (arg == "-h" || arg == "--help") {
-                print_usage(argv[0]);
-                return 0;
-            } else if (arg == "-q" || arg == "--quiet") {
-                quiet = true;
-            } else if (arg == "-i" || arg == "--info") {
-                info_only = true;
-            } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
-                output = argv[++i];
-            } else if ((arg == "-c" || arg == "--cookies") && i + 1 < argc) {
-                cookie_file = argv[++i];
-            } else if (arg[0] != '-') {
-                url = arg;
-            }
-        }
-
-        if (url.empty()) {
-            print_usage(argv[0]);
-            return 1;
-        }
-
-        if (!quiet) {
-            fmt::print("yt-dlp-cpp - Zoom Video Downloader (C++ Port)\n");
-            fmt::print("=============================================\n\n");
-        }
-
-        // Initialize YoutubeDL
-        core::YoutubeDLParams params;
-        params.quiet = quiet;
-        core::YoutubeDL ydl(params);
-
-        // Load cookies if provided
-        if (!cookie_file.empty()) {
-            if (!quiet) {
-                fmt::print("Loading cookies from: {}\n", cookie_file);
-            }
-            auto cookie_jar = std::make_shared<networking::CookieJar>();
-            cookie_jar->load(cookie_file);
-            ydl.http_client().set_cookie_jar(cookie_jar);
-            if (!quiet) {
-                fmt::print("Loaded {} cookies\n", cookie_jar->size());
-            }
-        }
-
-        // Create Zoom extractor
-        extractor::ZoomIE zoom(&ydl);
-
         // Check if URL is supported
         if (!zoom.suitable(url)) {
-            fmt::print(stderr, "Error: URL is not a valid Zoom recording URL\n");
-            fmt::print(stderr, "Supported patterns:\n");
-            fmt::print(stderr, "  - https://zoom.us/rec/play/...\n");
-            fmt::print(stderr, "  - https://zoom.us/rec/share/...\n");
-            fmt::print(stderr, "  - https://*.zoom.us/rec/play/...\n");
-            return 1;
+            fmt::print(stderr, "Error: URL is not a valid Zoom recording URL: {}\n", url);
+            return false;
         }
 
         if (!quiet) {
@@ -318,16 +269,16 @@ int main(int argc, char** argv) {
 
                 auto formats = info["formats"].get<std::vector<core::InfoDict>>();
                 for (size_t i = 0; i < formats.size() && i < 10; i++) {
-                    const auto& fmt = formats[i];
+                    const auto& f = formats[i];
                     fmt::print("  Format #{}: ", i+1);
-                    if (fmt.contains("format_id")) {
-                        fmt::print("{} ", fmt["format_id"].get<std::string>());
+                    if (f.contains("format_id")) {
+                        fmt::print("{} ", f["format_id"].get<std::string>());
                     }
-                    if (fmt.contains("ext")) {
-                        fmt::print("{} ", fmt["ext"].get<std::string>());
+                    if (f.contains("ext")) {
+                        fmt::print("{} ", f["ext"].get<std::string>());
                     }
-                    if (fmt.contains("height")) {
-                        fmt::print("{}p ", fmt["height"].get<int>());
+                    if (f.contains("height")) {
+                        fmt::print("{}p ", f["height"].get<int>());
                     }
                     fmt::print("\n");
                 }
@@ -335,7 +286,7 @@ int main(int argc, char** argv) {
         }
 
         if (info_only) {
-            return 0;
+            return true;
         }
 
         // Get download URL
@@ -344,9 +295,9 @@ int main(int argc, char** argv) {
             download_url = info["url"].get<std::string>();
         } else if (info.contains("formats") && info["formats"].is_array()) {
             auto formats = info["formats"].get<std::vector<core::InfoDict>>();
-            for (const auto& fmt : formats) {
-                if (fmt.contains("url") && fmt["url"].is_string()) {
-                    download_url = fmt["url"].get<std::string>();
+            for (const auto& f : formats) {
+                if (f.contains("url") && f["url"].is_string()) {
+                    download_url = f["url"].get<std::string>();
                     break;
                 }
             }
@@ -354,11 +305,11 @@ int main(int argc, char** argv) {
 
         if (download_url.empty()) {
             fmt::print(stderr, "Error: No download URL found\n");
-            return 1;
+            return false;
         }
 
-        // Generate output filename if not specified
-        // Uses smart naming: YYYY-MM-DD_HHMMSS_<title>_<id>.mp4
+        // Generate output filename
+        std::string output = custom_output;
         if (output.empty()) {
             output = generate_smart_filename(info, download_url, "mp4");
         }
@@ -375,11 +326,146 @@ int main(int argc, char** argv) {
                 fmt::print("\n✓ Download successful!\n");
                 fmt::print("  Saved to: {}\n", output);
             }
-            return 0;
+            return true;
         } else {
             fmt::print(stderr, "\n✗ Download failed\n");
+            return false;
+        }
+
+    } catch (const std::exception& e) {
+        fmt::print(stderr, "Error processing {}: {}\n", url, e.what());
+        return false;
+    }
+}
+
+void print_usage(const char* program_name) {
+    fmt::print("Usage: {} [options] <url>\n", program_name);
+    fmt::print("       {} [options] -a <batch_file>\n\n", program_name);
+    fmt::print("Options:\n");
+    fmt::print("  -a, --batch-file <file>  Read URLs from file (one per line)\n");
+    fmt::print("  -o, --output <file>      Output filename (default: auto-generated)\n");
+    fmt::print("  -c, --cookies <file>     Netscape cookie file for authentication\n");
+    fmt::print("  -i, --info               Print video info only (don't download)\n");
+    fmt::print("  -q, --quiet              Quiet mode\n");
+    fmt::print("  -h, --help               Show this help\n");
+    fmt::print("\nAuto-generated filename format:\n");
+    fmt::print("  YYYY-MM-DD_HHMMSS_<title>_<id>.mp4\n");
+    fmt::print("  Example: 2025-11-17_140940_Finanzas_Empresariales-GI3101_k-O3Gvpp.mp4\n");
+    fmt::print("\nBatch file format:\n");
+    fmt::print("  One URL per line. Empty lines and lines starting with # are ignored.\n");
+    fmt::print("\nExamples:\n");
+    fmt::print("  {} https://zoom.us/rec/play/xxx\n", program_name);
+    fmt::print("  {} -c cookies.txt -a urls.txt\n", program_name);
+    fmt::print("  {} -c cookies.txt -o custom.mp4 https://zoom.us/rec/play/xxx\n", program_name);
+}
+
+int main(int argc, char** argv) {
+    try {
+        // Parse arguments
+        std::string url;
+        std::string output;
+        std::string cookie_file;
+        std::string batch_file;
+        bool quiet = false;
+        bool info_only = false;
+
+        for (int i = 1; i < argc; i++) {
+            std::string arg = argv[i];
+            if (arg == "-h" || arg == "--help") {
+                print_usage(argv[0]);
+                return 0;
+            } else if (arg == "-q" || arg == "--quiet") {
+                quiet = true;
+            } else if (arg == "-i" || arg == "--info") {
+                info_only = true;
+            } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
+                output = argv[++i];
+            } else if ((arg == "-c" || arg == "--cookies") && i + 1 < argc) {
+                cookie_file = argv[++i];
+            } else if ((arg == "-a" || arg == "--batch-file") && i + 1 < argc) {
+                batch_file = argv[++i];
+            } else if (arg[0] != '-') {
+                url = arg;
+            }
+        }
+
+        // Need either URL or batch file
+        if (url.empty() && batch_file.empty()) {
+            print_usage(argv[0]);
             return 1;
         }
+
+        // Build list of URLs
+        std::vector<std::string> urls;
+        if (!batch_file.empty()) {
+            urls = read_batch_file(batch_file);
+            if (urls.empty()) {
+                fmt::print(stderr, "Error: No URLs found in batch file\n");
+                return 1;
+            }
+            if (!quiet) {
+                fmt::print("Loaded {} URLs from {}\n\n", urls.size(), batch_file);
+            }
+        }
+        if (!url.empty()) {
+            urls.push_back(url);
+        }
+
+        if (!quiet) {
+            fmt::print("yt-dlp-cpp - Zoom Video Downloader (C++ Port)\n");
+            fmt::print("=============================================\n\n");
+        }
+
+        // Initialize YoutubeDL
+        core::YoutubeDLParams params;
+        params.quiet = quiet;
+        core::YoutubeDL ydl(params);
+
+        // Load cookies if provided
+        if (!cookie_file.empty()) {
+            if (!quiet) {
+                fmt::print("Loading cookies from: {}\n", cookie_file);
+            }
+            auto cookie_jar = std::make_shared<networking::CookieJar>();
+            cookie_jar->load(cookie_file);
+            ydl.http_client().set_cookie_jar(cookie_jar);
+            if (!quiet) {
+                fmt::print("Loaded {} cookies\n\n", cookie_jar->size());
+            }
+        }
+
+        // Create Zoom extractor
+        extractor::ZoomIE zoom(&ydl);
+
+        // Process all URLs
+        int success_count = 0;
+        int fail_count = 0;
+
+        for (size_t i = 0; i < urls.size(); i++) {
+            const std::string& current_url = urls[i];
+
+            if (urls.size() > 1 && !quiet) {
+                fmt::print("\n[{}/{}] Processing: {}\n", i + 1, urls.size(), current_url);
+                fmt::print("─────────────────────────────────────────────────\n");
+            }
+
+            // Only use custom output for single URL
+            std::string current_output = (urls.size() == 1) ? output : "";
+
+            if (process_url(current_url, current_output, zoom, ydl, info_only, quiet)) {
+                success_count++;
+            } else {
+                fail_count++;
+            }
+        }
+
+        // Summary for batch downloads
+        if (urls.size() > 1 && !quiet) {
+            fmt::print("\n═══════════════════════════════════════════════════\n");
+            fmt::print("Batch complete: {} succeeded, {} failed\n", success_count, fail_count);
+        }
+
+        return (fail_count > 0) ? 1 : 0;
 
     } catch (const std::exception& e) {
         fmt::print(stderr, "Error: {}\n", e.what());
