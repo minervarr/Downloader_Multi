@@ -1,6 +1,7 @@
 #include "ytdlp/utils/date_utils.hpp"
 #include <regex>
 #include <ctime>
+#include <chrono>
 #include <iomanip>
 #include <sstream>
 #include <map>

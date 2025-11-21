@@ -105,7 +105,6 @@ set(YTDLP_SOURCES
     src/networking/http_header_dict.cpp
     src/extractor/info_extractor.cpp
     src/extractor/zoom.cpp
-    src/extractor/generic.cpp
     src/utils/string_utils.cpp
     src/utils/json_utils.cpp
     src/utils/filesystem_utils.cpp

@@ -422,6 +422,15 @@ bool CurlHttpClient::download_to_file(
     for (const auto& [key, value] : headers) {
         curl_headers.append(key + ": " + value);
     }
+
+    // Add cookies from cookie jar if available
+    if (cookie_jar_) {
+        std::string cookie_header = cookie_jar_->get_cookie_header(url);
+        if (!cookie_header.empty()) {
+            curl_headers.append("Cookie: " + cookie_header);
+        }
+    }
+
     if (curl_headers.get()) {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_headers.get());
     }
